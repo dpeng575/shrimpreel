@@ -27,6 +27,7 @@ import { Route as Char123LocaleChar125SlugRouteImport } from './routes/{-$locale
 import { Route as Char123LocaleChar125ContactRouteImport } from './routes/{-$locale}/contact'
 import { Route as Char123LocaleChar125DashboardRouteRouteImport } from './routes/{-$locale}/dashboard/route'
 import { Route as Char123LocaleChar125GuidesRouteImport } from './routes/{-$locale}/guides'
+import { Route as Char123LocaleChar125HotelLobbyRouteImport } from './routes/{-$locale}/hotel-lobby'
 import { Route as Char123LocaleChar125PricingRouteImport } from './routes/{-$locale}/pricing'
 import { Route as Char123LocaleChar125PrivacyPolicyRouteImport } from './routes/{-$locale}/privacy-policy'
 import { Route as Char123LocaleChar125RefundPolicyRouteImport } from './routes/{-$locale}/refund-policy'
@@ -139,6 +140,12 @@ const Char123LocaleChar125GuidesRoute =
   Char123LocaleChar125GuidesRouteImport.update({
     id: '/guides',
     path: '/guides',
+    getParentRoute: () => Char123LocaleChar125RouteRoute,
+  } as any)
+const Char123LocaleChar125HotelLobbyRoute =
+  Char123LocaleChar125HotelLobbyRouteImport.update({
+    id: '/hotel-lobby',
+    path: '/hotel-lobby',
     getParentRoute: () => Char123LocaleChar125RouteRoute,
   } as any)
 const Char123LocaleChar125PricingRoute =
@@ -257,6 +264,7 @@ export interface FileRoutesByFullPath {
   '/{-$locale}/$slug': typeof Char123LocaleChar125SlugRoute
   '/{-$locale}/contact': typeof Char123LocaleChar125ContactRoute
   '/{-$locale}/guides': typeof Char123LocaleChar125GuidesRoute
+  '/{-$locale}/hotel-lobby': typeof Char123LocaleChar125HotelLobbyRoute
   '/{-$locale}/pricing': typeof Char123LocaleChar125PricingRoute
   '/{-$locale}/privacy-policy': typeof Char123LocaleChar125PrivacyPolicyRoute
   '/{-$locale}/refund-policy': typeof Char123LocaleChar125RefundPolicyRoute
@@ -291,6 +299,7 @@ export interface FileRoutesByTo {
   '/{-$locale}/$slug': typeof Char123LocaleChar125SlugRoute
   '/{-$locale}/contact': typeof Char123LocaleChar125ContactRoute
   '/{-$locale}/guides': typeof Char123LocaleChar125GuidesRoute
+  '/{-$locale}/hotel-lobby': typeof Char123LocaleChar125HotelLobbyRoute
   '/{-$locale}/pricing': typeof Char123LocaleChar125PricingRoute
   '/{-$locale}/privacy-policy': typeof Char123LocaleChar125PrivacyPolicyRoute
   '/{-$locale}/refund-policy': typeof Char123LocaleChar125RefundPolicyRoute
@@ -329,6 +338,7 @@ export interface FileRoutesById {
   '/{-$locale}/$slug': typeof Char123LocaleChar125SlugRoute
   '/{-$locale}/contact': typeof Char123LocaleChar125ContactRoute
   '/{-$locale}/guides': typeof Char123LocaleChar125GuidesRoute
+  '/{-$locale}/hotel-lobby': typeof Char123LocaleChar125HotelLobbyRoute
   '/{-$locale}/pricing': typeof Char123LocaleChar125PricingRoute
   '/{-$locale}/privacy-policy': typeof Char123LocaleChar125PrivacyPolicyRoute
   '/{-$locale}/refund-policy': typeof Char123LocaleChar125RefundPolicyRoute
@@ -368,6 +378,7 @@ export interface FileRouteTypes {
     | '/{-$locale}/$slug'
     | '/{-$locale}/contact'
     | '/{-$locale}/guides'
+    | '/{-$locale}/hotel-lobby'
     | '/{-$locale}/pricing'
     | '/{-$locale}/privacy-policy'
     | '/{-$locale}/refund-policy'
@@ -402,6 +413,7 @@ export interface FileRouteTypes {
     | '/{-$locale}/$slug'
     | '/{-$locale}/contact'
     | '/{-$locale}/guides'
+    | '/{-$locale}/hotel-lobby'
     | '/{-$locale}/pricing'
     | '/{-$locale}/privacy-policy'
     | '/{-$locale}/refund-policy'
@@ -439,6 +451,7 @@ export interface FileRouteTypes {
     | '/{-$locale}/$slug'
     | '/{-$locale}/contact'
     | '/{-$locale}/guides'
+    | '/{-$locale}/hotel-lobby'
     | '/{-$locale}/pricing'
     | '/{-$locale}/privacy-policy'
     | '/{-$locale}/refund-policy'
@@ -591,6 +604,13 @@ declare module '@tanstack/react-router' {
       path: '/guides'
       fullPath: '/{-$locale}/guides'
       preLoaderRoute: typeof Char123LocaleChar125GuidesRouteImport
+      parentRoute: typeof Char123LocaleChar125RouteRoute
+    }
+    '/{-$locale}/hotel-lobby': {
+      id: '/{-$locale}/hotel-lobby'
+      path: '/hotel-lobby'
+      fullPath: '/{-$locale}/hotel-lobby'
+      preLoaderRoute: typeof Char123LocaleChar125HotelLobbyRouteImport
       parentRoute: typeof Char123LocaleChar125RouteRoute
     }
     '/{-$locale}/pricing': {
@@ -784,6 +804,7 @@ interface Char123LocaleChar125RouteRouteChildren {
   Char123LocaleChar125SlugRoute: typeof Char123LocaleChar125SlugRoute
   Char123LocaleChar125ContactRoute: typeof Char123LocaleChar125ContactRoute
   Char123LocaleChar125GuidesRoute: typeof Char123LocaleChar125GuidesRoute
+  Char123LocaleChar125HotelLobbyRoute: typeof Char123LocaleChar125HotelLobbyRoute
   Char123LocaleChar125PricingRoute: typeof Char123LocaleChar125PricingRoute
   Char123LocaleChar125PrivacyPolicyRoute: typeof Char123LocaleChar125PrivacyPolicyRoute
   Char123LocaleChar125RefundPolicyRoute: typeof Char123LocaleChar125RefundPolicyRoute
@@ -803,6 +824,7 @@ const Char123LocaleChar125RouteRouteChildren: Char123LocaleChar125RouteRouteChil
     Char123LocaleChar125SlugRoute: Char123LocaleChar125SlugRoute,
     Char123LocaleChar125ContactRoute: Char123LocaleChar125ContactRoute,
     Char123LocaleChar125GuidesRoute: Char123LocaleChar125GuidesRoute,
+    Char123LocaleChar125HotelLobbyRoute: Char123LocaleChar125HotelLobbyRoute,
     Char123LocaleChar125PricingRoute: Char123LocaleChar125PricingRoute,
     Char123LocaleChar125PrivacyPolicyRoute:
       Char123LocaleChar125PrivacyPolicyRoute,

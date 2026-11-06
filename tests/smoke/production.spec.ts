@@ -98,7 +98,7 @@ test('开发与 mock 入口全部关闭：同源 POST 也是 404，页面也打�
     const res = await request.post(path, { data: {}, headers: { origin: ORIGIN } })
     if (res.status() !== 404) wrong.push(`POST ${path} → ${res.status()}`)
   }
-  for (const path of ['/api/dev/emails', '/checkout/mock', '/zh/checkout/mock', '/checkout/mock?order=x']) {
+  for (const path of ['/api/dev/emails', '/api/dev/video-provider', '/checkout/mock', '/zh/checkout/mock', '/checkout/mock?order=x']) {
     const res = await request.get(path, { maxRedirects: 0 })
     if (res.status() !== 404) wrong.push(`GET ${path} → ${res.status()}`)
   }

@@ -1,8 +1,10 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { expect, test } from '@playwright/test'
-import { STYLES, defaultStyle, formatPrice, site } from '#/config/site'
+import { STYLES, defaultStyle, formatPrice, hotelLobbyStyle, site } from '#/config/site'
 import { ORIGIN, PHOTO, buyPackage, credits, devLogin, durationCredits, json, ledger, pkg, post, uniqueEmail, uploadPhoto } from './helpers'
 
-type Generation = { id: string; status: string; videoUrl: string | null; templateId: string }
+type Generation = { id: string; status: string; videoUrl: string | null; templateId: string; durationSeconds: number; creditsCost: number }
 
 const ADMIN_EMAIL = 'admin@example.com'
 const STARTER = pkg('starter').credits
@@ -110,6 +112,119 @@ test('并发轮询只落库一次、成片不被误删；后台记录服务商�
   await expect(page.getByTestId('admin-margin')).toContainText('估算毛利')
 })
 
+test('自定义参考视频：时长按服务端解析计费（伪造的客户端上报被忽略），损坏视频与他人视频被拒', async ({ request, playwright }) => {
+  const refVideo = readFileSync(join('seed/templates', defaultStyle.sources[site.durations[0]!.id]))
+  await devLogin(request, uniqueEmail('refvid'))
+  await buyPackage(request, 'starter')
+  const { upload } = await json<{ upload: { id: string } }>(uploadPhoto(request), 201)
+  const refRes = await request.post('/api/uploads', {
+    headers: { origin: ORIGIN },
+    multipart: { file: { name: 'ref.mp4', mimeType: 'video/mp4', buffer: refVideo } },
+  })
+  expect(refRes.status()).toBe(201)
+  const ref = (await refRes.json()) as { upload: { id: string } }
+
+  // 客户端谎报 3 秒：服务端解析 mp4 元数据得 6 秒，按 6 秒计费
+  const started = await json<{ generation: Generation }>(
+    post(request, '/api/generations', { uploadId: upload.id, refVideoUploadId: ref.upload.id, durationSeconds: 3 }),
+    201,
+  )
+  expect(started.generation.durationSeconds).toBe(6)
+  expect(started.generation.creditsCost).toBe(6)
+  // mock 出片就是参考视频本身：轮询到成功
+  let status = ''
+  for (let i = 0; i < 30 && status !== 'succeeded'; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 1000))
+    status = (await json<{ generation: Generation }>(request.get(`/api/generations/${started.generation.id}`))).generation.status
+  }
+  expect(status).toBe('succeeded')
+  expect(await credits(request)).toBe(STARTER - 6)
+
+  // 有 ftyp 魔数但解析不出时长（moov 缺失）的视频：拒绝且不扣积分
+  const fake = Buffer.concat([Buffer.from([0, 0, 0, 32]), Buffer.from('ftypisom'), Buffer.alloc(24)])
+  const fakeUpload = await request.post('/api/uploads', {
+    headers: { origin: ORIGIN },
+    multipart: { file: { name: 'fake.mp4', mimeType: 'video/mp4', buffer: fake } },
+  })
+  expect(fakeUpload.status()).toBe(201)
+  const fakeRef = (await fakeUpload.json()) as { upload: { id: string } }
+  const bad = await json<{ error: string }>(
+    post(request, '/api/generations', { uploadId: upload.id, refVideoUploadId: fakeRef.upload.id }),
+    400,
+  )
+  expect(bad.error).toBe('ref_video_invalid_duration')
+
+  // 别人的参考视频不能用
+  const other = await playwright.request.newContext({ baseURL: ORIGIN })
+  try {
+    await devLogin(other, uniqueEmail('refvid-thief'))
+    await buyPackage(other, 'starter')
+    const stolen = await json<{ error: string }>(
+      post(other, '/api/generations', { uploadId: upload.id, refVideoUploadId: ref.upload.id }),
+      400,
+    )
+    expect(stolen.error).toBe('invalid_upload')
+  } finally {
+    await other.dispose()
+  }
+})
+
+test('Hotel Lobby 内页：双人照片生成走 hotel-lobby 风格，第二张照片越权或缺失被拒', async ({ request, page, playwright }) => {
+  // 页面可访问且渲染出双人生成器；未登录时主按钮是注册入口
+  await page.goto('/hotel-lobby')
+  await expect(page.getByTestId('hotel-lobby-generator')).toBeVisible()
+  await expect(page.getByTestId('hl-sign-up')).toBeVisible()
+  await expect(page.getByTestId('hl-sound-guide')).toBeVisible()
+
+  await devLogin(request, uniqueEmail('hotel-lobby'))
+  await buyPackage(request, 'starter')
+  const { upload } = await json<{ upload: { id: string } }>(uploadPhoto(request), 201)
+  const photo2Res = await request.post('/api/uploads', {
+    headers: { origin: ORIGIN },
+    multipart: { file: { name: 'photo2.jpg', mimeType: 'image/jpeg', buffer: readFileSync(PHOTO) } },
+  })
+  const photo2 = (await photo2Res.json()) as { upload: { id: string } }
+
+  // 双人生成：记录的是 hotel-lobby 风格，mock 出片成功
+  const started = await json<{ generation: Generation }>(
+    post(request, '/api/generations', { uploadId: upload.id, photo2UploadId: photo2.upload.id, styleId: hotelLobbyStyle.id, durationId: 'short' }),
+    201,
+  )
+  expect(started.generation.templateId).toBe(hotelLobbyStyle.id)
+  let status = ''
+  for (let i = 0; i < 30 && status !== 'succeeded'; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 1000))
+    status = (await json<{ generation: Generation }>(request.get(`/api/generations/${started.generation.id}`))).generation.status
+  }
+  expect(status).toBe('succeeded')
+
+  // 第二张照片不存在 / 是别人的上传：拒绝且不扣积分
+  const missing = await json<{ error: string }>(
+    post(request, '/api/generations', { uploadId: upload.id, photo2UploadId: 'upl_nonexistent', styleId: hotelLobbyStyle.id, durationId: 'short' }),
+    400,
+  )
+  expect(missing.error).toBe('invalid_upload')
+
+  const other = await playwright.request.newContext({ baseURL: ORIGIN })
+  try {
+    await devLogin(other, uniqueEmail('hotel-thief'))
+    await buyPackage(other, 'starter')
+    const stolen = await json<{ error: string }>(
+      post(other, '/api/generations', { uploadId: upload.id, photo2UploadId: photo2.upload.id, styleId: hotelLobbyStyle.id, durationId: 'short' }),
+      400,
+    )
+    expect(stolen.error).toBe('invalid_upload')
+    // 主生成器风格不支持第二张照片
+    const wrongStyle = await json<{ error: string }>(
+      post(request, '/api/generations', { uploadId: upload.id, photo2UploadId: photo2.upload.id, styleId: defaultStyle.id, durationId: 'short' }),
+      400,
+    )
+    expect(wrongStyle.error).toBe('photo2_not_supported')
+  } finally {
+    await other.dispose()
+  }
+})
+
 test('风格：不带 styleId 用默认风格，不存在的风格返回 400 invalid_style 且不扣积分', async ({ request }) => {
   await devLogin(request, uniqueEmail('style-api'))
   await buyPackage(request, 'starter')
@@ -156,7 +271,6 @@ test.describe('多风格站点', () => {
 
     await page.getByTestId(`style-${second.id}`).click()
     await page.getByTestId('photo-input').setInputFiles(PHOTO)
-    await page.getByTestId('duration-short').click()
     await page.getByTestId('consent').check()
     await expect(page.getByTestId('generate')).toBeEnabled()
     await page.getByTestId('generate').click()

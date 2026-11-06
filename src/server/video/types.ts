@@ -6,6 +6,11 @@ export interface VideoSubmitInput {
   style: Style
   durationSeconds: number
   imageUrl: string
+  // R2 里的对象 key：需要把媒体二进制交给服务商（如 kie 的上传接口）时用，不走公开 URL
+  imageKey: string
+  // 第二张参考图（Hotel Lobby 双人风格：左/右各一人）。缺省 = 服务商只收一张图
+  photo2Url?: string
+  photo2Key?: string
   sourceVideoUrl: string
   sourceVideoKey: string
   webhookUrl: string
@@ -25,7 +30,7 @@ export type VideoStatus =
   | { state: 'failed'; code: string; message: string; retryable?: boolean }
 
 export interface VideoProvider {
-  id: 'fal' | 'yir' | 'nanoapi' | 'mock'
+  id: 'fal' | 'yir' | 'nanoapi' | 'kie' | 'mock'
   submit(input: VideoSubmitInput): Promise<VideoSubmitResult>
   status(requestId: string, meta: Record<string, unknown>): Promise<VideoStatus>
   // 出一条成片的估算成本（美分），出片后写入 generations.provider_cost_cents

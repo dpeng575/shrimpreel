@@ -22,21 +22,31 @@ export function Generator({ styleId: controlledStyleId, onStyleChange }: { style
   const pathname = useRouterState({ select: (s) => s.location.pathname })
   const { user, config, loading, refresh } = useSession()
   const inputRef = useRef<HTMLInputElement>(null)
+  const refVideoInputRef = useRef<HTMLInputElement>(null)
   const [photo, setPhoto] = useState<Photo | null>(null)
+  // 可选的自定义参考视频（VIDEO_PROVIDER=kie 时后端支持）：替换参考视频里的人/物，而不是模板视频
+  const [refVideo, setRefVideo] = useState<{ file: File; uploadId: string | null } | null>(null)
+  // 参考视频的实际时长（浏览器读元数据）：积分按它算，Seedance 收 4–15 秒
+  const [refSeconds, setRefSeconds] = useState<number | null>(null)
+  // 补充指令与清晰度对任何 provider 都可以填：mock 忽略，kie 传给 Seedance
+  const [prompt, setPrompt] = useState('')
+  const [resolution, setResolution] = useState<'480p' | '720p'>('480p')
   const [uploading, setUploading] = useState(false)
   const [dragging, setDragging] = useState(false)
   const [ownStyleId, setOwnStyleId] = useState<string>(defaultStyle.id)
   const styleId = controlledStyleId ?? ownStyleId
   const selectStyle = onStyleChange ?? setOwnStyleId
-  const [durationId, setDurationId] = useState<string>(site.durations[site.durations.length - 1]!.id)
+  // 时长选择器已移除：上传参考视频时成片时长跟随参考视频（4–15 秒），未上传时生成最短的模板视频档
+  const defaultDuration = site.durations[0]!
   const [consent, setConsent] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [generation, setGeneration] = useState<Generation | null>(null)
 
   const checkout = useCheckout()
-  const duration = site.durations.find((d) => d.id === durationId) ?? site.durations[0]!
-  const shortfall = user ? Math.max(0, duration.credits - user.credits) : 0
+  // 积分：有参考视频时按它的实际时长算（4–15 秒，向上取整），没有时按最短模板档
+  const credits = refVideo && refSeconds ? Math.min(15, Math.max(4, Math.ceil(refSeconds))) : defaultDuration.credits
+  const shortfall = user ? Math.max(0, credits - user.credits) : 0
   // 余额不足时直接在这里下单够用的最便宜积分包；没有够用的包就退回去价格页
   const coverPack = shortfall > 0 ? cheapestPackageCovering(shortfall) : undefined
 
@@ -89,6 +99,49 @@ export function Generator({ styleId: controlledStyleId, onStyleChange }: { style
     }
   }
 
+  // 浏览器读视频元数据拿时长：本地拿不到时长的文件（编码异常等）直接拒绝
+  function readVideoSeconds(file: File) {
+    return new Promise<number>((resolve, reject) => {
+      const video = document.createElement('video')
+      video.preload = 'metadata'
+      const url = URL.createObjectURL(file)
+      video.onloadedmetadata = () => {
+        URL.revokeObjectURL(url)
+        resolve(video.duration)
+      }
+      video.onerror = () => {
+        URL.revokeObjectURL(url)
+        reject(new Error('metadata'))
+      }
+      video.src = url
+    })
+  }
+
+  async function selectRefVideo(file: File | undefined) {
+    if (!file) return
+    setError(null)
+    if (file.type !== 'video/mp4') return setError('unsupported_file_type')
+    if (file.size > site.upload.maxVideoBytes) return setError('file_too_large')
+    let seconds: number
+    try {
+      seconds = await readVideoSeconds(file)
+    } catch {
+      return setError('ref_video_unreadable')
+    }
+    // Seedance 参考视频 2–15 秒：超限在选择时就拒绝，避免扣积分后被服务商退回
+    if (!Number.isFinite(seconds) || seconds < 2 || seconds > 15) return setError('ref_video_too_long')
+    setRefSeconds(seconds)
+    setRefVideo({ file, uploadId: null })
+    setGeneration(null)
+    if (!user) return
+    try {
+      const uploadId = await upload(file)
+      setRefVideo((current) => (current?.file === file ? { ...current, uploadId } : current))
+    } catch (err) {
+      setError(errorCode(err))
+    }
+  }
+
   async function generate() {
     if (!photo) return setError('invalid_upload')
     setError(null)
@@ -96,8 +149,22 @@ export function Generator({ styleId: controlledStyleId, onStyleChange }: { style
     try {
       const uploadId = photo.uploadId ?? (await upload(photo.file))
       if (!photo.uploadId) setPhoto({ ...photo, uploadId })
-      const data = await api<{ generation: Generation }>('/api/generations', { json: { uploadId, durationId, styleId, locale } })
-      track('generate_video', { style_id: styleId, duration_id: durationId, credits: data.generation.creditsCost })
+      const refVideoUploadId = refVideo ? refVideo.uploadId ?? (await upload(refVideo.file)) : undefined
+      if (refVideo && !refVideo.uploadId) setRefVideo({ ...refVideo, uploadId: refVideoUploadId! })
+      const data = await api<{ generation: Generation }>('/api/generations', {
+        json: {
+          uploadId,
+          // durationId 只是记账用的模板档位；上传参考视频时真实时长走 durationSeconds
+          durationId: defaultDuration.id,
+          styleId,
+          locale,
+          ...(refVideoUploadId ? { refVideoUploadId } : {}),
+          ...(refVideo && refSeconds ? { durationSeconds: refSeconds } : {}),
+          ...(prompt.trim() ? { prompt: prompt.trim() } : {}),
+          ...(resolution !== '480p' ? { resolution } : {}),
+        },
+      })
+      track('generate_video', { style_id: styleId, duration_id: defaultDuration.id, credits: data.generation.creditsCost })
       setGeneration(data.generation)
       await refresh()
     } catch (err) {
@@ -184,6 +251,67 @@ export function Generator({ styleId: controlledStyleId, onStyleChange }: { style
         <p className="text-xs leading-5 text-muted">{g.guidance}</p>
       </section>
 
+      {/* 可选：自定义参考视频 + 提示词（替换模式）。选了视频才显示提示词输入框 */}
+      <section className="space-y-2 rounded-xl border border-dashed border-line p-3" data-testid="ref-video-section">
+        <input
+          ref={refVideoInputRef}
+          type="file"
+          accept="video/mp4"
+          className="sr-only"
+          tabIndex={-1}
+          aria-label={g.refVideoTitle}
+          data-testid="ref-video-input"
+          onChange={(event) => {
+            void selectRefVideo(event.target.files?.[0])
+            event.target.value = ''
+          }}
+        />
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          <button type="button" disabled={busy} className="btn-ghost px-3 py-1.5 text-xs" onClick={() => refVideoInputRef.current?.click()} data-testid="ref-video-button">
+            {refVideo ? <CircleCheck className="size-4 text-emerald-600" /> : <Upload className="size-4" />}
+            {refVideo ? (uploading && !refVideo.uploadId ? g.uploading : g.refVideoUploaded) : g.refVideoButton}
+          </button>
+          <span className="text-xs text-muted">{g.refVideoHint}</span>
+        </div>
+        {refVideo ? <p className="text-xs text-muted">{g.refVideoNote}</p> : null}
+
+        {/* 补充指令：常驻可选，不依赖参考视频 */}
+        <label className="block space-y-1.5 pt-1">
+          <span className="block text-xs font-semibold text-fg">{g.promptLabel}</span>
+          <textarea
+            value={prompt}
+            onChange={(event) => setPrompt(event.target.value)}
+            rows={2}
+            maxLength={1200}
+            placeholder={g.promptPlaceholder}
+            className="input w-full text-sm"
+            data-testid="ref-prompt"
+          />
+        </label>
+
+        {/* 清晰度选择：默认 480p（成本最低） */}
+        <div className="space-y-1.5">
+          <span className="block text-xs font-semibold text-fg">{g.resolutionLabel}</span>
+          <div className="grid grid-cols-2 gap-1 rounded-xl bg-bg-soft p-1" role="radiogroup" aria-label={g.resolutionLabel}>
+            {(['480p', '720p'] as const).map((r) => (
+              <button
+                key={r}
+                type="button"
+                role="radio"
+                aria-checked={resolution === r}
+                disabled={busy}
+                data-testid={`resolution-${r}`}
+                onClick={() => setResolution(r)}
+                className={`rounded-lg px-2 py-1.5 text-center text-sm font-semibold uppercase transition ${resolution === r ? 'bg-card shadow-sm ring-1 ring-line' : 'text-muted hover:text-fg'}`}
+              >
+                {r}
+              </button>
+            ))}
+          </div>
+          <p className="text-xs text-muted">{g.resolutionHint}</p>
+        </div>
+      </section>
+
       {/* 2. 风格：只有一种风格时不显示 */}
       {STYLES.length > 1 ? (
         <section className="space-y-3">
@@ -216,32 +344,14 @@ export function Generator({ styleId: controlledStyleId, onStyleChange }: { style
         </section>
       ) : null}
 
-      {/* 时长 */}
-      <section className="space-y-3">
-        <StepTitle n={STYLES.length > 1 ? 3 : 2}>{g.stepLength}</StepTitle>
-        <div className="grid grid-cols-3 gap-1 rounded-xl bg-bg-soft p-1" role="radiogroup" aria-label={g.stepLength}>
-          {site.durations.map((d) => {
-            const active = d.id === durationId
-            return (
-              <button
-                key={d.id}
-                type="button"
-                role="radio"
-                aria-checked={active}
-                disabled={busy}
-                data-testid={`duration-${d.id}`}
-                onClick={() => setDurationId(d.id)}
-                className={`rounded-lg px-2 py-2 text-center transition ${active ? 'bg-card shadow-sm ring-1 ring-line' : 'text-muted hover:text-fg'}`}
-              >
-                <span className="block text-sm font-semibold">
-                  {g.seconds(d.seconds)}
-                  {'isFull' in d && d.isFull ? ` · ${g.full}` : ''}
-                </span>
-                <span className="block text-xs text-muted">{g.creditsLabel(d.credits)}</span>
-              </button>
-            )
-          })}
-        </div>
+      {/* 时长说明：不再提供选择器，成片时长跟随参考视频 */}
+      <section className="space-y-1" data-testid="length-note">
+        {STYLES.length > 1 ? null : <StepTitle n={2}>{g.stepLength}</StepTitle>}
+        <p className="text-xs leading-5 text-muted">
+          {refVideo && refSeconds
+            ? g.lengthFollowsRefVideo(Math.ceil(refSeconds), credits)
+            : g.lengthDefault(defaultDuration.seconds, defaultDuration.credits)}
+        </p>
       </section>
 
       <label className="flex items-start gap-3 text-xs leading-5 text-muted">
@@ -304,7 +414,7 @@ export function Generator({ styleId: controlledStyleId, onStyleChange }: { style
             data-testid="generate"
           >
             {submitting ? <Spinner /> : null}
-            {g.ctaGenerate(duration.credits)}
+            {g.ctaGenerate(credits)}
           </button>
         )}
         {user ? (

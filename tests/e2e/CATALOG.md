@@ -61,6 +61,10 @@ e2e 跑在本地 dev server 上，支付、视频、审核服务商都是 mock�
   - 3 路并发 mock-finish 只落库一次，成片保留；mock 成本为 0，失败任务的成本为 NULL；后台显示毛利。
 - `generation.spec.ts` › `风格：不带 styleId 用默认风格，不存在的风格返回 400 invalid_style 且不扣积分`
   - 不存在的 styleId 返回 `invalid_style`，余额不变、没有任务；不带 styleId 时 `templateId` 是默认风格，扣 short 档积分。
+- `generation.spec.ts` › `自定义参考视频：时长按服务端解析计费（伪造的客户端上报被忽略），损坏视频与他人视频被拒`
+  - 上传参考视频后生成：客户端谎报 3 秒也被忽略，服务端解析 mp4 元数据按 6 秒计费，mock 出片成功、余额扣 6；只有 ftyp 魔数没有 moov 的损坏视频返回 `ref_video_invalid_duration` 且不扣积分；别人的参考视频返回 `invalid_upload`。
+- `generation.spec.ts` › `Hotel Lobby 内页：双人照片生成走 hotel-lobby 风格，第二张照片越权或缺失被拒`
+  - `/hotel-lobby` 渲染双人生成器；两张照片 + hotel-lobby 风格生成成功、`template_id` 是 hotel-lobby-v1；第二张照片不存在或属于他人返回 `invalid_upload`；主生成器风格带第二张照片返回 `photo2_not_supported`。
 - `generation.spec.ts` › `首页切换 hero 标签与生成器同步，选第二个风格生成，记录里是所选风格；?style= 可预选`
   - 只在 `site.styles` 多于一个时运行（模板默认一个，会跳过）：hero 标签与生成器选中项同步，方向键切标签，“Made with”每个风格一行；所选风格写入 `templateId`；`?style=` 预选，无效 id 回到默认风格。
 - `alerts.spec.ts` › `死信：任务判失败并只退一次积分；健康检查告警，同一时间桶重复执行不重发`

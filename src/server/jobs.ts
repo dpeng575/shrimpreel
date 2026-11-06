@@ -59,7 +59,7 @@ export async function storeOutputFromUrl(
   await env.MEDIA.put(key, bytes, { httpMetadata })
   return true
 }
-const POLL_DELAY_SECONDS: Record<string, number> = { mock: 2, fal: 20, yir: 20, nanoapi: 30 }
+const POLL_DELAY_SECONDS: Record<string, number> = { mock: 2, fal: 20, yir: 20, nanoapi: 30, kie: 30 }
 
 export async function enqueueJob(env: Env, message: VideoJobMessage, delaySeconds = 0) {
   await env.VIDEO_QUEUE.send(message, delaySeconds > 0 ? { delaySeconds } : undefined)
@@ -127,6 +127,31 @@ async function submitGeneration(env: Env, generation: GenerationRow) {
   const provider = getVideoProvider(env, generation.provider)
   const baseMeta = parseMeta(generation.provider_meta)
 
+  // 自定义参考视频（meta.refUploadId，VIDEO_PROVIDER=kie 时可用）：源视频换成用户自传的那条，风格源视频不用
+  let refUpload: UploadRow | null = null
+  const refUploadId = typeof baseMeta.refUploadId === 'string' ? baseMeta.refUploadId : ''
+  if (refUploadId) {
+    refUpload = await env.DB.prepare('SELECT * FROM uploads WHERE id = ? AND user_id = ?')
+      .bind(refUploadId, generation.user_id)
+      .first<UploadRow>()
+    if (!refUpload || refUpload.expired_at || refUpload.content_type !== 'video/mp4') {
+      await failGeneration(env, generation.id, 'invalid_input', 'Custom reference video no longer exists')
+      return
+    }
+  }
+  // 第二张参考图（meta.photo2UploadId，Hotel Lobby 双人风格）：必须是本人的图片上传
+  let photo2Upload: UploadRow | null = null
+  const photo2UploadId = typeof baseMeta.photo2UploadId === 'string' ? baseMeta.photo2UploadId : ''
+  if (photo2UploadId) {
+    photo2Upload = await env.DB.prepare('SELECT * FROM uploads WHERE id = ? AND user_id = ?')
+      .bind(photo2UploadId, generation.user_id)
+      .first<UploadRow>()
+    if (!photo2Upload || photo2Upload.expired_at || photo2Upload.content_type === 'video/mp4') {
+      await failGeneration(env, generation.id, 'invalid_input', 'Second photo no longer exists')
+      return
+    }
+  }
+
   // 签名在 try 里：生产环境 SESSION_SECRET 配错时会抛错，要和提交失败一样放回 queued，交给队列重试和死信退款
   try {
     const webhookUrl = new URL(`/api/webhooks/${provider.id}`, env.SITE_URL)
@@ -138,8 +163,17 @@ async function submitGeneration(env: Env, generation: GenerationRow) {
       style,
       durationSeconds: generation.duration_seconds,
       imageUrl: await signedUploadUrl(env, upload.id, Date.parse(generation.created_at)),
-      sourceVideoUrl: templateSourceUrl(env, sourceFile),
-      sourceVideoKey: `templates/${sourceFile}`,
+      imageKey: upload.r2_key,
+      ...(photo2Upload
+        ? {
+            photo2Url: await signedUploadUrl(env, photo2Upload.id, Date.parse(generation.created_at)),
+            photo2Key: photo2Upload.r2_key,
+          }
+        : {}),
+      sourceVideoUrl: refUpload
+        ? await signedUploadUrl(env, refUpload.id, Date.parse(generation.created_at))
+        : templateSourceUrl(env, sourceFile),
+      sourceVideoKey: refUpload ? refUpload.r2_key : `templates/${sourceFile}`,
       webhookUrl: webhookUrl.toString(),
       meta: baseMeta,
     })

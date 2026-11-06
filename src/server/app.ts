@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import type { ContentfulStatusCode } from 'hono/utils/http-status'
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie'
-import { defaultStyle, findDuration, findPackage, findPlan, findStyle, isLocale, localePath, sellingPlans, site } from '#/config/site'
+import { defaultStyle, findDuration, findPackage, findPlan, findStyle, hotelLobbyCredits, hotelLobbySeconds, hotelLobbyStyle, isLocale, localePath, sellingPlans, site } from '#/config/site'
 import { safeRedirectPath } from '#/lib/redirect'
 import { exportFileName, exportUserData } from './account-export'
 import { adminRoutes } from './admin'
@@ -15,7 +15,7 @@ import { CSP_REPORT_PATH, summarizeCspReports } from './csp'
 import { exchangeGoogleCode, googleAuthRedirect, googleClientId, googleOAuthConfig, verifyGoogleIdToken } from './google'
 import { publicGeneration, publicOrder, rateLimit, readJson, requireUser, pageParams } from './http'
 import { enqueueJob, failGeneration, handleDeadLetter, handleVideoJob } from './jobs'
-import { jobToken, serveR2Object, sniffImageType, verifyUploadSignature } from './media'
+import { jobToken, mp4DurationSeconds, serveR2Object, sniffImageType, sniffVideoType, verifyUploadSignature } from './media'
 import { getModerationProvider } from './moderation'
 import { processPaymentEvent } from './orders'
 import { reconcileOrder, reconcilePendingOrders } from './reconcile'
@@ -245,28 +245,37 @@ app.post('/api/uploads', async (c) => {
   // 没有 Content-Length（分块上传）时 formData() 会把整个请求体读进内存，直接拒绝；浏览器上传表单总会带长度
   const header = c.req.header('content-length')
   if (!header || !/^\d+$/.test(header)) throw new ApiError(411, 'length_required')
-  if (Number(header) > site.upload.maxBytes + 64 * 1024) throw new ApiError(413, 'file_too_large')
+  // 预检查按图片/视频上限的较大者：类型确定后各按各的上限精确拒绝
+  const uploadCeiling = Math.max(site.upload.maxBytes, site.upload.maxVideoBytes) + 64 * 1024
+  if (Number(header) > uploadCeiling) throw new ApiError(413, 'file_too_large')
   const form = await c.req.raw.formData().catch(() => null)
   const file = form?.get('file')
   if (!file || typeof file === 'string') throw new ApiError(400, 'missing_file')
-  if (file.size > site.upload.maxBytes) throw new ApiError(413, 'file_too_large')
   const bytes = new Uint8Array(await file.arrayBuffer())
-  const contentType = sniffImageType(bytes)
-  if (!contentType || !(site.upload.contentTypes as readonly string[]).includes(contentType)) {
+  const contentType = sniffImageType(bytes) ?? sniffVideoType(bytes)
+  // 图片按站点白名单；视频只放行 mp4（Seedance 参考视频只收 mp4/mov）
+  const allowed = contentType === 'video/mp4' || (!!contentType && (site.upload.contentTypes as readonly string[]).includes(contentType))
+  if (!contentType || !allowed) {
     throw new ApiError(415, 'unsupported_file_type')
   }
+  // 视频走独立大小上限（Seedance 参考视频 50 MB）；图片照旧
+  const maxBytes = contentType === 'video/mp4' ? site.upload.maxVideoBytes : site.upload.maxBytes
+  if (bytes.length > maxBytes) throw new ApiError(413, 'file_too_large')
   // 已下架内容的原图不允许再次上传；审核不通过的不落盘、不扣积分
   const hash = await sha256Hex(bytes)
   if (await isBlockedMedia(c.env, hash)) throw new ApiError(422, 'content_rejected')
-  const mockOutcome = form?.get('mockOutcome')
-  const verdict = await getModerationProvider(c.env).checkImage({
-    bytes,
-    contentType,
-    mockOutcome: typeof mockOutcome === 'string' ? mockOutcome : null,
-  })
-  if (!verdict.allowed) {
-    console.warn('upload rejected by moderation', user.id, verdict.reason)
-    throw new ApiError(422, 'content_rejected')
+  // 视频暂不接审核：现有审核商只支持图片。自定义参考视频目前只在 VIDEO_PROVIDER=kie 下开放，上线前要补视频审核或先审后用
+  if (contentType !== 'video/mp4') {
+    const mockOutcome = form?.get('mockOutcome')
+    const verdict = await getModerationProvider(c.env).checkImage({
+      bytes,
+      contentType,
+      mockOutcome: typeof mockOutcome === 'string' ? mockOutcome : null,
+    })
+    if (!verdict.allowed) {
+      console.warn('upload rejected by moderation', user.id, verdict.reason)
+      throw new ApiError(422, 'content_rejected')
+    }
   }
   const id = createId('upl')
   const key = `uploads/${user.id}/${id}`
@@ -286,9 +295,22 @@ app.post('/api/generations', async (c) => {
   const settings = await getSettings(c.env)
   assertOpen(settings, user)
   await rateLimit(c.env.GENERATE_LIMITER, user.id)
-  const body = await readJson<{ uploadId: string; durationId: string; styleId?: string; mockOutcome: string; locale: string }>(c)
-  const duration = findDuration(body.durationId ?? '')
-  if (!duration) throw new ApiError(400, 'invalid_duration')
+  const body = await readJson<{
+    uploadId: string
+    durationId: string
+    styleId?: string
+    mockOutcome: string
+    locale: string
+    // 自定义参考视频 + 提示词 + 清晰度（仅 VIDEO_PROVIDER=kie 或 mock 时可用）：用替换图替换参考视频里的人/物
+    refVideoUploadId?: string
+    prompt?: string
+    resolution?: string
+    // 第二张参考图（Hotel Lobby 双人风格 /hotel-lobby）：右侧人物
+    photo2UploadId?: string
+    // durationSeconds（浏览器读的预估）已不再采信：服务端解析 mp4 元数据计费，客户端传了也会被忽略
+  }>(c)
+  // durationId 只在无参考视频时决定时长档（模板源视频按它选）；有参考视频时只是记账档位，真实时长走 durationSeconds
+  const bookDuration = findDuration(body.durationId ?? '')
   // 不带 styleId 用默认风格；带了但不存在报错，不悄悄换风格
   const style = body.styleId === undefined || body.styleId === null ? defaultStyle : findStyle(String(body.styleId))
   if (!style) throw new ApiError(400, 'invalid_style')
@@ -309,7 +331,70 @@ app.post('/api/generations', async (c) => {
 
   const providerId = activeVideoProviderId(c.env)
   const mockOutcome = providerId === 'mock' && (body.mockOutcome === 'fail' || body.mockOutcome === 'hang') ? body.mockOutcome : null
-  const meta = mockOutcome ? JSON.stringify({ mockOutcome }) : null
+  // 自定义参考视频：只允许支持它的 provider；归属校验与图片一致，必须是本人未过期的 mp4 上传
+  const refVideoUploadId = typeof body.refVideoUploadId === 'string' ? body.refVideoUploadId : ''
+  let refUploadRow: UploadRow | null = null
+  if (refVideoUploadId && providerId !== 'kie' && providerId !== 'mock') {
+    throw new ApiError(400, 'custom_video_not_supported')
+  }
+  if (refVideoUploadId) {
+    const refUpload = await db
+      .prepare('SELECT * FROM uploads WHERE id = ? AND user_id = ? AND expired_at IS NULL')
+      .bind(refVideoUploadId, user.id)
+      .first<UploadRow>()
+    if (!refUpload || refUpload.content_type !== 'video/mp4') throw new ApiError(400, 'invalid_upload')
+    refUploadRow = refUpload
+  }
+  // 时长与积分：无参考视频按时长档；有参考视频时成片跟随参考视频——时长以服务端解析 mp4 元数据为准
+  // （浏览器读的值只用于 UI 预估；客户端上报可伪造，不能作为计费依据），上下限沿用 Seedance 的 2–15 秒
+  let durationId: string
+  let durationSeconds: number
+  let creditsCost: number
+  if (refVideoUploadId) {
+    const refObject = await c.env.MEDIA.get(refUploadRow!.r2_key)
+    if (!refObject) throw new ApiError(400, 'invalid_upload')
+    const actual = mp4DurationSeconds(new Uint8Array(await refObject.arrayBuffer()))
+    // 解析不出时长（损坏/不完整的 mp4）或超出 Seedance 上限：拒绝并全额不扣
+    if (actual === null || actual < 2 || actual > 15) throw new ApiError(400, 'ref_video_invalid_duration')
+    durationSeconds = Math.min(15, Math.max(4, Math.ceil(actual)))
+    creditsCost = durationSeconds
+    durationId = (bookDuration ?? site.durations[0]!).id
+  } else {
+    if (!bookDuration) throw new ApiError(400, 'invalid_duration')
+    durationId = bookDuration.id
+    // Hotel Lobby 是固定模板：成片时长与积分都按模板长度走，不受 durations 档位影响
+    if (style.id === hotelLobbyStyle.id) {
+      durationSeconds = hotelLobbySeconds
+      creditsCost = hotelLobbyCredits
+    } else {
+      durationSeconds = bookDuration.seconds
+      creditsCost = bookDuration.credits
+    }
+  }
+  // 提示词常驻可选（补充指令）：Seedance 上限 20000 字符，这里收紧到 1200。清晰度只认kie 支持的两档，默认 480p
+  const prompt = typeof body.prompt === 'string' ? body.prompt.trim().slice(0, 1200) : ''
+  const resolution = body.resolution === '720p' || body.resolution === '480p' ? body.resolution : null
+  // 第二张参考图（Hotel Lobby 双人风格）：只有该风格支持，且服务商要能消费多张参考图（kie；mock 供 e2e）。
+  // 归属与图片一致，必须是本人的图片上传
+  const photo2UploadId = typeof body.photo2UploadId === 'string' ? body.photo2UploadId : ''
+  const photo2Supported = style.id === hotelLobbyStyle.id && (providerId === 'kie' || providerId === 'mock')
+  if (photo2UploadId && !photo2Supported) {
+    throw new ApiError(400, 'photo2_not_supported')
+  }
+  if (photo2UploadId) {
+    const photo2 = await db
+      .prepare('SELECT * FROM uploads WHERE id = ? AND user_id = ? AND expired_at IS NULL')
+      .bind(photo2UploadId, user.id)
+      .first<UploadRow>()
+    if (!photo2 || photo2.content_type === 'video/mp4') throw new ApiError(400, 'invalid_upload')
+  }
+  const meta = JSON.stringify({
+    ...(mockOutcome ? { mockOutcome } : {}),
+    ...(refVideoUploadId ? { refUploadId: refVideoUploadId } : {}),
+    ...(photo2UploadId ? { photo2UploadId } : {}),
+    ...(prompt ? { prompt } : {}),
+    ...(resolution ? { resolution } : {}),
+  })
   const id = createId('gen')
   const now = nowIso()
   try {
@@ -320,10 +405,10 @@ app.post('/api/generations', async (c) => {
            status, provider, provider_meta, created_at, updated_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)`,
         )
-        .bind(id, user.id, style.id, duration.id, duration.seconds, duration.credits, upload.id, providerId, meta, now, now),
+        .bind(id, user.id, style.id, durationId, durationSeconds, creditsCost, upload.id, providerId, meta, now, now),
       ...ledgerStatements(db, {
         userId: user.id,
-        delta: -duration.credits,
+        delta: -creditsCost,
         reason: 'generation',
         refId: id,
         idempotencyKey: `generation:${id}`,
@@ -798,7 +883,7 @@ app.post('/api/webhooks/stripe', async (c) => {
 
 // 视频服务商完成回调（fal、yir、nanoapi）：只当作“立即轮询”的信号，真实结果由 jobs.ts 用 API key 拉取，
 // 所以只校验地址里的任务 token，不验 yir 的签名头；nanoapi 的回调不带签名，同样只靠地址里的 token
-for (const provider of ['fal', 'yir', 'nanoapi']) {
+for (const provider of ['fal', 'yir', 'nanoapi', 'kie']) {
   app.post(`/api/webhooks/${provider}`, async (c) => {
     const generationId = c.req.query('gen') ?? ''
     const token = c.req.query('token') ?? ''
@@ -923,6 +1008,12 @@ app.post('/api/dev/expire-credits', async (c) => {
   await c.env.DB.batch(expireStatements(c.env.DB, new Date(Date.now() + days * 86400_000).toISOString(), user.id))
   const row = await c.env.DB.prepare('SELECT credits FROM users WHERE id = ?').bind(user.id).first<{ credits: number }>()
   return c.json({ credits: row?.credits ?? 0 })
+})
+
+// 本地 e2e / global-setup 用：报告当前生效的视频服务商，e2e 启动时据此拒绝在非 mock 模式下跑测试
+app.get('/api/dev/video-provider', async (c) => {
+  if (!isLocalDevRequest(c)) throw new ApiError(404, 'not_found')
+  return c.json({ provider: activeVideoProviderId(c.env) })
 })
 
 // 本地 e2e：查看发件箱。本地 send_email binding 只模拟发送（不会真的发出），以发件箱记录为准

@@ -43,7 +43,7 @@ const PAYMENT_SECRETS: Record<string, string[]> = {
   dodo: ['DODO_API_KEY', 'DODO_WEBHOOK_SECRET'],
   stripe: ['STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET'],
 }
-const VIDEO_SECRETS: Record<string, string[]> = { fal: ['FAL_KEY'], yir: ['YIR_API_KEY'], nanoapi: ['NANOAPI_API_KEY'] }
+const VIDEO_SECRETS: Record<string, string[]> = { fal: ['FAL_KEY'], yir: ['YIR_API_KEY'], nanoapi: ['NANOAPI_API_KEY'], kie: ['KIE_API_KEY'] }
 const MODERATION_SECRETS: Record<string, string[]> = { openai: ['OPENAI_API_KEY'], none: [] }
 const PLACEHOLDER_HOSTS = /(^|\.)(example\.(com|org|net)|localhost)$|^127\.|SUBDOMAIN/i
 

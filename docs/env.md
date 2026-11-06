@@ -46,6 +46,7 @@
 | `FAL_KEY` | `VIDEO_PROVIDER=fal` | |
 | `YIR_API_KEY` | `VIDEO_PROVIDER=yir` | 可选 secret，类型声明在 `src/env.d.ts`。建议在 yir Console 给这个 Key 设月度额度，见 README 的“视频服务商” |
 | `NANOAPI_API_KEY` | `VIDEO_PROVIDER=nanoapi` | 可选 secret，类型声明在 `src/env.d.ts`。NanoAPI 没有月度额度，余额用完提交会返回 402，见 README 的“视频服务商” |
+| `KIE_API_KEY` | `VIDEO_PROVIDER=kie` | 可选 secret，类型声明在 `src/env.d.ts`。kie.ai 按积分（≈美元）扣费，余额不足创建任务返回 body code 402；支持用户自传参考视频（生成器“添加参考视频”），见 README 的“视频服务商” |
 | `OPENAI_API_KEY` | `MODERATION_PROVIDER=openai` | 可选 secret，类型声明在 `src/env.d.ts` |
 | `TURNSTILE_SECRET_KEY` | 配了 `TURNSTILE_SITE_KEY` | 同上 |
 | `PAYMENT_NOTIFY_WEBHOOK_URL` | 可选 | 每笔订单首次入账（含后台补单）时往聊天群发一条付款消息：金额、套餐、积分、来源和订单号。按域名识别：Telegram 填 `https://api.telegram.org/bot<token>/sendMessage?chat_id=<id>`；飞书 / Lark 填自定义机器人地址（不要开“签名校验”，可以用关键词“新付款”）；Discord 填频道 webhook；其他地址（如 Slack Incoming Webhook）发 `{"text": ...}`。发送失败只记日志，不影响入账。也会收到运维告警（健康检查、备份失败、视频服务商余额低于 10 美元；同一类告警每 6 小时最多一条），飞书关键词建议同时加“告警”。地址里带 token，所以放 secret。可选 secret，类型声明在 `src/env.d.ts` |

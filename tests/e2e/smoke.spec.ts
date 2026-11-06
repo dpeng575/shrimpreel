@@ -34,7 +34,6 @@ test('新用户：登录 → 购买 → 生成 → 个人中心看到视频与�
   // 按钮出现 = 已水合且会话加载完；之前的输入事件 React 接收不到
   await expect(page.getByTestId('generate')).toBeVisible()
   await page.getByTestId('photo-input').setInputFiles(PHOTO)
-  await page.getByTestId('duration-short').click()
   await page.getByTestId('consent').check()
   await expect(page.getByTestId('generate')).toBeEnabled()
   await page.getByTestId('generate').click()
@@ -88,14 +87,14 @@ test('中文站：购买流程全程保持 /zh 前缀', async ({ page }) => {
 test('生成器就地购买：余额不足时按钮是够用的最便宜的包，点击进收银台，付款后积分到账', async ({ page }) => {
   await devLogin(page.request, uniqueEmail('inline-buy'))
   const balance = await credits(page.request)
-  const longest = site.durations[site.durations.length - 1]!
-  const shortfall = longest.credits - balance
+  // 时长选择器已移除：余额不足按默认模板档（最短档）算
+  const duration = site.durations[0]!
+  const shortfall = duration.credits - balance
   expect(shortfall, '注册赠送已够用时本用例没有意义').toBeGreaterThan(0)
   const pack = cheapestPackageCovering(shortfall)!
 
   await page.goto('/')
   await expect(page.getByTestId('generator-balance')).toBeVisible()
-  await page.getByTestId(`duration-${longest.id}`).click()
   const buy = page.getByTestId('generator-buy')
   await expect(buy).toHaveText(content.en.generator.ctaBuyPack(pack.credits, formatPrice(pack.priceCents, pack.currency)))
   await expect(page.getByTestId('generator-see-packs')).toHaveAttribute('href', '/pricing')

@@ -77,3 +77,53 @@ export function sniffImageType(bytes: Uint8Array): 'image/jpeg' | 'image/png' | 
   }
   return null
 }
+
+// 只认真实 MP4：ISO BMFF 的 ftyp box 固定在第 4–8 字节（mp4 和 mov 都是）；WebM 是 EBML 魔数但 Seedance 不收，这里不放行
+export function sniffVideoType(bytes: Uint8Array): 'video/mp4' | null {
+  if (bytes.length >= 12 && String.fromCharCode(...bytes.slice(4, 8)) === 'ftyp') return 'video/mp4'
+  return null
+}
+
+// 解析 MP4 的 mvhd box 拿成片时长（秒）。Worker 里没有 ffprobe，纯 JS 按 ISO BMFF box 结构遍历：
+// 顶层找 moov，moov 里找 mvhd，按 version 读 timescale/duration。moov 可能在文件头也可能在尾（流式优化），
+// 所以要整个文件的字节（调用方已有）。解析不出（损坏/不是完整 mp4）返回 null，由调用方拒绝
+export function mp4DurationSeconds(bytes: Uint8Array): number | null {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+  const type = (off: number) => String.fromCharCode(bytes[off + 4]!, bytes[off + 5]!, bytes[off + 6]!, bytes[off + 7]!)
+  // 在 [start,end) 里找指定类型的子 box，返回其内容起始偏移与大小
+  function findBox(start: number, end: number, want: string): { content: number; size: number } | null {
+    let off = start
+    while (off + 8 <= end) {
+      let size = view.getUint32(off)
+      const head = 8
+      if (size === 1) {
+        // 64 位大 box：真实媒体用不到这个量级，遇到就放弃解析
+        return null
+      }
+      if (size === 0) size = end - off
+      if (size < head || off + size > end) return null
+      if (type(off) === want) return { content: off + head, size: size - head }
+      off += size
+    }
+    return null
+  }
+  const moov = findBox(0, bytes.length, 'moov')
+  if (!moov) return null
+  const mvhd = findBox(moov.content, moov.content + moov.size, 'mvhd')
+  if (!mvhd) return null
+  const version = bytes[mvhd.content]!
+  let timescale: number
+  let duration: number
+  if (version === 1) {
+    if (mvhd.size < 32) return null
+    timescale = view.getUint32(mvhd.content + 20)
+    duration = Number(view.getBigUint64(mvhd.content + 24))
+  } else {
+    if (mvhd.size < 20) return null
+    timescale = view.getUint32(mvhd.content + 12)
+    duration = view.getUint32(mvhd.content + 16)
+  }
+  if (!timescale || !Number.isFinite(duration) || duration <= 0) return null
+  const seconds = duration / timescale
+  return Number.isFinite(seconds) && seconds > 0 ? seconds : null
+}

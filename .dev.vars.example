@@ -16,6 +16,8 @@ FAL_KEY=
 YIR_API_KEY=
 # NanoAPI 视频服务（VIDEO_PROVIDER=nanoapi 时必填）
 NANOAPI_API_KEY=
+# kie.ai 视频服务（VIDEO_PROVIDER=kie 时必填）
+KIE_API_KEY=
 # 图片审核（MODERATION_PROVIDER=openai 时必填）
 OPENAI_API_KEY=
 # Turnstile（vars.TURNSTILE_SITE_KEY 非空时必填）

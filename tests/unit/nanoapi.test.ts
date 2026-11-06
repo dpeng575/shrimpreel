@@ -15,6 +15,7 @@ const input = (webhookUrl = 'https://moonhop.ai/api/webhooks/nanoapi?gen=gen_1&t
   style,
   durationSeconds: 12,
   imageUrl: 'https://moonhop.ai/media/uploads/upl_1?exp=1&sig=s',
+  imageKey: 'uploads/usr_1/upl_1.jpg',
   sourceVideoUrl: 'https://moonhop.ai/media/templates/neon-12s.mp4',
   sourceVideoKey: 'templates/neon-12s.mp4',
   webhookUrl,

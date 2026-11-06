@@ -107,6 +107,20 @@ export const site = {
       // genjutsu-1.0：480p $0.117/s、720p $0.273/s、1080p $0.78/s。motion_control 计费秒数 = 源视频秒数四舍五入、至少 4 秒；replace_object 向上取整
       costCentsPerSecond: 11.7,
     },
+    // kie.ai（可选，VIDEO_PROVIDER=kie）：Seedance 2.0 多模态参考，参考视频 + 参考图 + 提示词，
+    // 用参考图里的人/物替换参考视频里的人/物。支持 meta.prompt（生成请求自定义提示词）和 meta.refUploadId（用户自传参考视频）。
+    // Seedance 限制：参考视频每段 2–15 秒、成片时长 4–15 秒，比这长的模板源视频档位会快速失败；接入前先按 15 秒内裁剪源视频
+    kie: {
+      model: 'bytedance/seedance-2',
+      prompt: 'Replace the person in the reference video with the person from the reference image. Keep the reference video\'s motion, camera movement and rhythm exactly the same.',
+      resolution: '480p' as '480p' | '720p',
+      // 成本估算（美分/秒），只用于后台毛利；出片后优先用 kie.ai 返回的 creditsConsumed 记账。
+      // 带参考视频时按 单价 × (参考视频时长 + 成片时长) 计费。
+      // 2026-11-01 实测 480p（参考视频+成片各 5 秒）115 credits = $0.575，折合 5.75 美分/秒
+      costCentsPerSecond: 5.75,
+      // kie.ai 积分换算成美分的比例：1 credit = $0.005（出处 kie.ai 定价页与多个第三方比对，2026-11-01 核对）
+      creditUsdCents: 0.5,
+    },
   },
 
   durations: [
@@ -149,6 +163,9 @@ export const site = {
   upload: {
     maxBytes: 10 * 1024 * 1024,
     contentTypes: ['image/jpeg', 'image/png', 'image/webp'],
+    // 自定义参考视频（VIDEO_PROVIDER=kie 时生成器可用）：只收 mp4，上限对齐 Seedance 的 50 MB；
+    // 时长限制（2–15 秒）服务端探不到，由提示文案和 provider 端校验兜底
+    maxVideoBytes: 50 * 1024 * 1024,
   },
 
   // 数据保留（天）：Cron 到期删除 R2 对象并标记 expired；隐私政策与个人中心按这里的值展示。
@@ -257,7 +274,7 @@ export const STYLES: readonly Style[] = site.styles
 export const defaultStyle: Style = STYLES[0]!
 
 export function findStyle(id: string): Style | undefined {
-  return STYLES.find((s) => s.id === id)
+  return STYLES.find((s) => s.id === id) ?? (id === hotelLobbyStyle.id ? hotelLobbyStyle : undefined)
 }
 
 export function findDuration(id: string) {
@@ -270,6 +287,34 @@ export function findPackage(id: string) {
 
 // 在售的订阅套餐：开关关掉时为空。处理已有订阅（续费、退款、账单页）用 findPlan，不受开关影响
 export const sellingPlans: readonly SubscriptionPlan[] = site.subscriptionsEnabled ? site.plans : []
+
+// Hotel Lobby 内页的独立风格（/hotel-lobby）：不进 site.styles，避免出现在首页的风格选择里。
+// 两张照片（左侧/右侧人物）+ 固定模板视频（橙色直播间双人表演）→ Seedance 多模态参考替换两个人物。
+// 模板视频要求：9:16、无声、2–15 秒（Seedance 上限 15 秒）、场景与动作每次一致。
+// TODO(site): 当前模板是临时验证用的 6 秒视频（借自 makehotellobby 的示例前 6 秒，只在本机 R2、未入 seed/ 和 git）。
+// 上线前必须换成自有版权的模板（自制文生视频或获得授权），并把 hotelLobbySeconds/hotelLobbyCredits 对齐到新模板时长
+export const hotelLobbyStyle: Style = {
+  id: 'hotel-lobby-v1',
+  sources: {
+    short: 'hotel-lobby-v1-6s.mp4',
+    medium: 'hotel-lobby-v1-6s.mp4',
+    full: 'hotel-lobby-v1-6s.mp4',
+  },
+  prompt:
+    'The two people from the reference images perform the exact moves from the reference video, side by side at the hanging microphone — the person in the first image stands on the left, the person in the second image stands on the right. Keep each person\'s face, hairstyle and outfit unchanged. Mouth movement must follow the reference video exactly: when a performer\'s mouth is closed or not singing in the reference, keep it closed; open the mouth to sing only during the moments where the reference shows singing. Keep the orange booth, the lighting, the camera framing and the rhythm exactly as in the reference video. No audio.',
+  scene: null,
+  // 内页不展示素材区；复用首页 demo 占位（public/demo/），不参与本页渲染
+  examples: {
+    original: { video: '/demo/original.mp4', poster: '/demo/original.jpg', credit: 'Demo clip · original' },
+    aiVersions: [{ video: '/demo/ai1.mp4', poster: '/demo/ai1.jpg', credit: 'Demo clip · AI render' }],
+    madeWith: { photo: '/demo/sample-photo.jpg', video: '/demo/madeWith.mp4', poster: '/demo/madeWith.jpg' },
+  },
+}
+
+// Hotel Lobby 模板视频的时长与积分价：模板是固定长度（成片跟随模板），不走 durations 档位。
+// 换正式模板时把两个值同步改成新模板的秒数
+export const hotelLobbySeconds = 6
+export const hotelLobbyCredits = 6
 
 export function findPlan(id: string) {
   return site.plans.find((p) => p.id === id)
