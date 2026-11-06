@@ -24,7 +24,7 @@ export const site = {
   trendPlatform: 'TikTok',
   ogImage: '/og.png',
   // 页面主题，可选值和效果见 src/lib/theme.ts
-  theme: 'classic' as ThemeName,
+  theme: 'lobby' as ThemeName,
 
   // 生成模板的共用参数：provider 输出时长 = 源视频时长，所以每种风格的每个时长档位各有一段剪好的源视频（见 styles[].sources）。
   template: {
