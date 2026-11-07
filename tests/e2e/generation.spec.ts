@@ -124,13 +124,13 @@ test('自定义参考视频：时长按服务端解析计费（伪造的客户�
   expect(refRes.status()).toBe(201)
   const ref = (await refRes.json()) as { upload: { id: string } }
 
-  // 客户端谎报 3 秒：服务端解析 mp4 元数据得 6 秒，按 6 秒计费
+  // 客户端谎报 3 秒：服务端解析 mp4 元数据得 6 秒；积分按 kie 成本口径倒推（6 秒 → 3 积分，见 customRefCredits）
   const started = await json<{ generation: Generation }>(
     post(request, '/api/generations', { uploadId: upload.id, refVideoUploadId: ref.upload.id, durationSeconds: 3 }),
     201,
   )
   expect(started.generation.durationSeconds).toBe(6)
-  expect(started.generation.creditsCost).toBe(6)
+  expect(started.generation.creditsCost).toBe(3)
   // mock 出片就是参考视频本身：轮询到成功
   let status = ''
   for (let i = 0; i < 30 && status !== 'succeeded'; i++) {
@@ -138,7 +138,7 @@ test('自定义参考视频：时长按服务端解析计费（伪造的客户�
     status = (await json<{ generation: Generation }>(request.get(`/api/generations/${started.generation.id}`))).generation.status
   }
   expect(status).toBe('succeeded')
-  expect(await credits(request)).toBe(STARTER - 6)
+  expect(await credits(request)).toBe(STARTER - 3)
 
   // 有 ftyp 魔数但解析不出时长（moov 缺失）的视频：拒绝且不扣积分
   const fake = Buffer.concat([Buffer.from([0, 0, 0, 32]), Buffer.from('ftypisom'), Buffer.alloc(24)])

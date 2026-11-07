@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { STYLES, cheapestPackageCovering, defaultStyle, formatPrice, site } from '#/config/site'
 import { api, errorCode, isActiveGeneration, type Generation } from '#/lib/api'
 import { track } from '#/lib/attribution'
+import { customRefCredits } from '#/lib/pricing'
 import { useCheckout } from '#/lib/checkout'
 import { useContent, useLocale, useLocalePath } from '#/lib/i18n'
 import { signInHref, useSession } from '#/lib/session'
@@ -45,7 +46,7 @@ export function Generator({ styleId: controlledStyleId, onStyleChange }: { style
 
   const checkout = useCheckout()
   // 积分：有参考视频时按它的实际时长算（4–15 秒，向上取整），没有时按最短模板档
-  const credits = refVideo && refSeconds ? Math.min(15, Math.max(4, Math.ceil(refSeconds))) : defaultDuration.credits
+  const credits = refVideo && refSeconds ? customRefCredits(refSeconds) : defaultDuration.credits
   const shortfall = user ? Math.max(0, credits - user.credits) : 0
   // 余额不足时直接在这里下单够用的最便宜积分包；没有够用的包就退回去价格页
   const coverPack = shortfall > 0 ? cheapestPackageCovering(shortfall) : undefined

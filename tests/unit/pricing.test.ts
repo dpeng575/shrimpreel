@@ -1,54 +1,36 @@
 import { describe, expect, it } from 'vitest'
-import { anchorPrice, cheapestPackageCovering, packageMakes, site, type CreditPackage } from '#/config/site'
+import { site } from '#/config/site'
+import { customRefCredits } from '#/lib/pricing'
+import { kieCostCents } from '#/server/video/kie'
 
-const pack = (fields: { priceCents: number; anchorPriceCents?: number }) => ({ id: 'starter', credits: 20, currency: 'USD', ...fields }) as unknown as CreditPackage
-
-// 划线原价只在填了真实原价且高于售价时出现；填错（等于或低于售价）不能显示成“打折”
-describe('anchorPrice', () => {
-  it('没填原价时不显示', () => {
-    expect(anchorPrice(pack({ priceCents: 990 }))).toBeNull()
+// 自定义参考视频的扣分规则：积分 = ceil(kie 成本(美分) × 毛利系数 ÷ 积分售价)。
+// 成本口径 = 单价 × (参考视频时长 + 成片时长)，两段都夹在 4–15 秒；lib 的公式必须和 server 的 kieCostCents 同口径
+describe('customRefCredits', () => {
+  it('按 kie 成本倒推：4 秒→2、6 秒→3、10 秒→5、15 秒→7（成本 50% 毛利、积分售价 49.5 美分）', () => {
+    expect(customRefCredits(4)).toBe(2)
+    expect(customRefCredits(6)).toBe(3)
+    expect(customRefCredits(10)).toBe(5)
+    expect(customRefCredits(15)).toBe(7)
+    expect(customRefCredits(2)).toBe(2) // 下限夹到 4 秒
+    expect(customRefCredits(20)).toBe(7) // 上限夹到 15 秒
+    expect(customRefCredits(0)).toBe(2)
   })
 
-  it('原价等于或低于售价时不显示', () => {
-    expect(anchorPrice(pack({ priceCents: 990, anchorPriceCents: 990 }))).toBeNull()
-    expect(anchorPrice(pack({ priceCents: 990, anchorPriceCents: 500 }))).toBeNull()
+  it('lib 公式与 server 的 kieCostCents 同口径：同秒数下 成本×毛利系数÷售价 = 扣分', () => {
+    for (const seconds of [4, 5, 6, 9, 12, 15]) {
+      const expected = Math.max(1, Math.ceil((kieCostCents(seconds) * site.billing.marginFactor) / site.billing.creditValueCents))
+      expect(customRefCredits(seconds)).toBe(expected)
+    }
   })
 
-  it('原价高于售价时返回原价和四舍五入的折扣百分比', () => {
-    expect(anchorPrice(pack({ priceCents: 1990, anchorPriceCents: 2990 }))).toEqual({ cents: 2990, percentOff: 33 })
-    expect(anchorPrice(pack({ priceCents: 990, anchorPriceCents: 1980 }))).toEqual({ cents: 1980, percentOff: 50 })
-  })
-})
-
-// 价格卡“能做几条”：最长的买得起的时长 + 最短时长（相同则一项），随 site.durations 推导
-describe('packageMakes', () => {
-  const shortest = site.durations[0]!
-  const longest = site.durations[site.durations.length - 1]!
-
-  it('一个时长都买不起时为空', () => {
-    expect(packageMakes(0)).toEqual([])
-    expect(packageMakes(shortest.credits - 1)).toEqual([])
-  })
-
-  it('刚好够最短时长时只列一项', () => {
-    expect(packageMakes(shortest.credits)).toEqual([{ videos: 1, seconds: shortest.seconds }])
-  })
-
-  it('够最长时长时列最长和最短两项', () => {
-    const credits = longest.credits * 2
-    expect(packageMakes(credits)).toEqual([
-      { videos: 2, seconds: longest.seconds },
-      { videos: Math.floor(credits / shortest.credits), seconds: shortest.seconds },
-    ])
-  })
-})
-
-// 生成器就地购买：选积分够补缺口的最便宜的包
-describe('cheapestPackageCovering', () => {
-  it('返回积分 ≥ 缺口且价格最低的包；缺口大于所有包时为 undefined', () => {
-    const max = Math.max(...site.packages.map((p) => p.credits))
-    const found = cheapestPackageCovering(1)!
-    expect(found.priceCents).toBe(Math.min(...site.packages.map((p) => p.priceCents)))
-    expect(cheapestPackageCovering(max + 1)).toBeUndefined()
+  it('至少扣 1 积分：即便成本被配置成 0 也不出现 0 积分生成', () => {
+    const rate = site.video.kie.costCentsPerSecond
+    const kieConfig = site.video.kie as { costCentsPerSecond: number }
+    kieConfig.costCentsPerSecond = 0
+    try {
+      expect(customRefCredits(6)).toBe(1)
+    } finally {
+      kieConfig.costCentsPerSecond = rate
+    }
   })
 })

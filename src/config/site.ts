@@ -58,6 +58,14 @@ export const site = {
     },
   ],
 
+  // 扣分换算（自定义参考视频路径）：积分 = ceil(供应商成本(美分) × marginFactor ÷ creditValueCents)。
+  // creditValueCents = 1 个积分的售价，按最便宜积分包单价算（$9.90/20 个 ≈ 49.5 美分/积分）；
+  // marginFactor = 毛利系数，2 表示成本占售价 50%。换积分包定价时同步改这里
+  billing: {
+    creditValueCents: 49.5,
+    marginFactor: 2,
+  },
+
   // 全站共用的首页展示素材
   examples: {
     // “创意”区块：每条 = 一张示例照片 + 一段成片

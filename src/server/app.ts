@@ -45,6 +45,7 @@ import { createTakedown, isBlockedMedia, parseTakedown, type TakedownInput } fro
 import { turnstileSiteKey, verifyTurnstile } from './turnstile'
 import type { AppContext, GenerationRow, OrderRow, UploadRow, UserRow } from './types'
 import { ApiError, constantTimeEqual, createId, isCheckConstraintError, isProduction, nowIso, randomToken, sha256Hex } from './util'
+import { customRefCredits } from '#/lib/pricing'
 import { activeVideoProviderId } from './video'
 
 const MAX_ACTIVE_JOBS_PER_USER = 3
@@ -357,7 +358,8 @@ app.post('/api/generations', async (c) => {
     // 解析不出时长（损坏/不完整的 mp4）或超出 Seedance 上限：拒绝并全额不扣
     if (actual === null || actual < 2 || actual > 15) throw new ApiError(400, 'ref_video_invalid_duration')
     durationSeconds = Math.min(15, Math.max(4, Math.ceil(actual)))
-    creditsCost = durationSeconds
+    // 积分按供应商真实计费口径倒推（单价 × (参考视频 + 成片)），不是"1 秒 1 积分"
+    creditsCost = customRefCredits(durationSeconds)
     durationId = (bookDuration ?? site.durations[0]!).id
   } else {
     if (!bookDuration) throw new ApiError(400, 'invalid_duration')
